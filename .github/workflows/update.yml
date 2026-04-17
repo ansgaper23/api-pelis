@@ -1,19 +1,18 @@
-
-name: Actualizar Cartelera
+name: Actualizar Cartelera Perucho TV
 
 on:
   schedule:
-    - cron: '0 4 * * *' # Se ejecuta todos los días a las 4 AM automáticamente
-  workflow_dispatch: # Nos permite ejecutarlo con un botón manualmente
+    - cron: '0 8 * * *'
+  workflow_dispatch:
 
 permissions:
-  contents: write # Para que el bot pueda guardar los JSON
+  contents: write
 
 jobs:
   actualizar-datos:
     runs-on: ubuntu-latest
     steps:
-      - name: Descargar el código
+      - name: Descargar el repositorio
         uses: actions/checkout@v3
 
       - name: Instalar Node.js
@@ -21,16 +20,16 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Instalar librerías
+      - name: Instalar dependencias
         run: npm install
 
-      - name: Ejecutar Extracción
+      - name: Ejecutar el Scraper
         run: node scraper.js
 
-      - name: Guardar los JSON actualizados
+      - name: Guardar los JSON generados en el repositorio
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
           git add peliculas.json series.json
-          git commit -m "Actualización automática de enlaces" || exit 0
+          git commit -m "Actualización automática de JSON" || echo "No hay cambios para subir"
           git push
