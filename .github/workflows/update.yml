@@ -1,1 +1,36 @@
 
+name: Actualizar Cartelera
+
+on:
+  schedule:
+    - cron: '0 4 * * *' # Se ejecuta todos los días a las 4 AM automáticamente
+  workflow_dispatch: # Nos permite ejecutarlo con un botón manualmente
+
+permissions:
+  contents: write # Para que el bot pueda guardar los JSON
+
+jobs:
+  actualizar-datos:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v3
+
+      - name: Instalar Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Instalar librerías
+        run: npm install
+
+      - name: Ejecutar Extracción
+        run: node scraper.js
+
+      - name: Guardar los JSON actualizados
+        run: |
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+          git add peliculas.json series.json
+          git commit -m "Actualización automática de enlaces" || exit 0
+          git push
