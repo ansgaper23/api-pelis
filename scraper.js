@@ -14,13 +14,9 @@ const opcionesFetch = {
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-function detectarIdioma(nombre) {
-    const n = nombre.toLowerCase();
-    if (n.includes('latino') || n.includes('lat')) return 'Latino';
-    if (n.includes('castellano') || n.includes('españa') || n.includes('spa')) return 'Castellano';
-    if (n.includes('sub') || n.includes('vose')) return 'Subtitulado';
-    if (n.includes('ing') || n.includes('eng')) return 'Inglés';
-    return 'Desconocido';
+function formatearTexto(texto) {
+    if (!texto) return "Desconocido";
+    return texto.charAt(0).toUpperCase() + texto.slice(1).toLowerCase();
 }
 
 async function procesarPeliculas() {
@@ -29,7 +25,7 @@ async function procesarPeliculas() {
     const data = JSON.parse(await res.text());
     const filtradas = [];
 
-    console.log(`Se encontraron ${data.length} películas. Analizando enlaces...`);
+    console.log(`Analizando ${data.length} películas...`);
 
     for (let i = 0; i < data.length; i++) {
         const p = data[i];
@@ -38,19 +34,20 @@ async function procesarPeliculas() {
             const links = await resLinks.json();
             
             const servidores = [];
-            if (links && typeof links === 'object') {
-                for (const key in links) {
-                    const item = links[key];
-                    const url = item.url || item;
-                    const nombreServidor = item.name || "Servidor";
+            const listaLinks = Array.isArray(links) ? links : Object.values(links || {});
 
-                    if (typeof url === 'string' && (url.includes('vidhide') || url.includes('streamwish'))) {
-                        servidores.push({
-                            nombre: nombreServidor,
-                            url: url,
-                            idioma: detectarIdioma(nombreServidor)
-                        });
-                    }
+            for (const item of listaLinks) {
+                if (!item || typeof item !== 'object') continue;
+                const url = item.url;
+                
+                if (typeof url === 'string' && (url.includes('vidhide') || url.includes('streamwish'))) {
+                    let nombreServidor = url.includes('vidhide') ? "Vidhide" : "Streamwish";
+                    servidores.push({
+                        nombre: nombreServidor,
+                        url: url,
+                        calidad: item.quality || "HD",
+                        idioma: formatearTexto(item.language)
+                    });
                 }
             }
 
@@ -66,7 +63,7 @@ async function procesarPeliculas() {
                 });
             }
         } catch (e) {}
-        if (i % 500 === 0 && i !== 0) console.log(`Películas analizadas: ${i}/${data.length}`);
+        if (i % 500 === 0 && i !== 0) console.log(`Películas: ${i}/${data.length}`);
         await delay(30);
     }
     return filtradas;
@@ -78,63 +75,59 @@ async function procesarSeries() {
     const data = JSON.parse(await res.text());
     const filtradas = [];
 
-    console.log(`Se encontraron ${data.length} series. Analizando temporadas y capítulos...`);
+    console.log(`Analizando ${data.length} series...`);
 
     for (let i = 0; i < data.length; i++) {
         const s = data[i];
         try {
-            // 1. Pedir información completa de la serie (incluye temporadas)
+            // Obtenemos info de la serie (temporadas/episodios)
             const resInfo = await fetch(`${BASE_URL}&action=get_series_info&series_id=${s.series_id}`, opcionesFetch);
             const serieData = await resInfo.json();
-            const episodiosData = serieData.episodes; // Objeto con temporadas
+            const episodiosData = serieData.episodes; 
 
             if (!episodiosData || typeof episodiosData !== 'object') continue;
 
             const temporadasValidas = [];
 
-            // 2. Recorrer cada temporada
             for (const numTemporada in episodiosData) {
                 const capitulosOriginales = episodiosData[numTemporada];
                 const capitulosValidos = [];
 
-                // 3. Recorrer cada capítulo de la temporada
                 for (const cap of capitulosOriginales) {
-                    const capId = cap.id;
-                    
-                    // 4. Pedir los enlaces (servidores) de este capítulo específico
-                    const resLinks = await fetch(`${BASE_URL}&action=get_vod_links&vod_id=${capId}`, opcionesFetch);
+                    // Nueva URL sugerida para obtener links de episodios de series
+                    const epUrl = `${BASE_URL}&action=get_episode_links&serie=${s.series_id}&season=${numTemporada}&episode=${cap.episode_num}`;
+                    const resLinks = await fetch(epUrl, opcionesFetch);
                     const links = await resLinks.json();
 
                     const servidores = [];
-                    if (links && typeof links === 'object') {
-                        for (const key in links) {
-                            const item = links[key];
-                            const url = item.url || item;
-                            const nombreServidor = item.name || "Servidor";
+                    const listaLinks = Array.isArray(links) ? links : Object.values(links || {});
 
-                            if (typeof url === 'string' && (url.includes('vidhide') || url.includes('streamwish'))) {
-                                servidores.push({
-                                    nombre: nombreServidor,
-                                    url: url,
-                                    idioma: detectarIdioma(nombreServidor)
-                                });
-                            }
+                    for (const item of listaLinks) {
+                        if (!item || typeof item !== 'object') continue;
+                        const url = item.url;
+                        
+                        if (typeof url === 'string' && (url.includes('vidhide') || url.includes('streamwish'))) {
+                            let nombreServidor = url.includes('vidhide') ? "Vidhide" : "Streamwish";
+                            servidores.push({
+                                nombre: nombreServidor,
+                                url: url,
+                                calidad: item.quality || "HD",
+                                idioma: formatearTexto(item.language)
+                            });
                         }
                     }
 
-                    // Si el capítulo tiene los servidores correctos, lo guardamos
                     if (servidores.length > 0) {
                         capitulosValidos.push({
-                            id: capId,
-                            numero: cap.episode_num || cap.title || "0",
-                            titulo: cap.info?.name || cap.title || `Capítulo ${cap.episode_num}`,
+                            id: cap.id,
+                            numero: cap.episode_num,
+                            titulo: cap.title || `Capítulo ${cap.episode_num}`,
                             servidores: servidores
                         });
                     }
-                    await delay(20); // Pausa pequeñita entre capítulos
+                    await delay(25); 
                 }
 
-                // Si la temporada tiene capítulos con enlaces válidos, la guardamos
                 if (capitulosValidos.length > 0) {
                     temporadasValidas.push({
                         numero: numTemporada,
@@ -143,7 +136,6 @@ async function procesarSeries() {
                 }
             }
 
-            // 5. Finalmente, si la serie tiene temporadas válidas, guardamos la serie entera
             if (temporadasValidas.length > 0) {
                 const info = serieData.info || {};
                 let banner = info.backdrop_path ? info.backdrop_path[0] : (s.backdrop_path ? s.backdrop_path[0] : null);
@@ -158,11 +150,10 @@ async function procesarSeries() {
                     temporadas: temporadasValidas
                 });
             }
-
         } catch (e) {}
         
-        if (i % 100 === 0 && i !== 0) console.log(`Series analizadas: ${i}/${data.length}`);
-        await delay(30); // Pausa entre series
+        if (i % 100 === 0 && i !== 0) console.log(`Series: ${i}/${data.length}`);
+        await delay(30); 
     }
     return filtradas;
 }
@@ -171,15 +162,15 @@ async function iniciar() {
     try {
         const peliculas = await procesarPeliculas();
         fs.writeFileSync('peliculas.json', JSON.stringify(peliculas, null, 2));
-        console.log(`✅ ¡Películas guardadas! Total filtradas: ${peliculas.length}`);
+        console.log(`✅ Películas listas: ${peliculas.length}`);
 
         const series = await procesarSeries();
         fs.writeFileSync('series.json', JSON.stringify(series, null, 2));
-        console.log(`✅ ¡Series guardadas! Total filtradas: ${series.length}`);
+        console.log(`✅ Series listas: ${series.length}`);
 
-        console.log("🚀 Sincronización completada con éxito.");
+        console.log("🚀 Sincronización completa.");
     } catch (error) {
-        console.error("❌ Error crítico en el script:", error.message);
+        console.error("❌ Error:", error.message);
         process.exit(1); 
     }
 }
