@@ -19,16 +19,40 @@ function formatearTexto(texto) {
     return texto.charAt(0).toUpperCase() + texto.slice(1).toLowerCase();
 }
 
+// NUEVA FUNCIÓN: Lee el archivo JSON si existe, o devuelve un array vacío si es la primera vez
+function cargarCatalogoExistente(rutaArchivo) {
+    if (fs.existsSync(rutaArchivo)) {
+        try {
+            return JSON.parse(fs.readFileSync(rutaArchivo, 'utf8'));
+        } catch (error) {
+            console.error(`⚠️ Error leyendo ${rutaArchivo}. Se asumirá que está vacío.`);
+            return [];
+        }
+    }
+    return [];
+}
+
 async function procesarPeliculas() {
     console.log("--- INICIANDO PELÍCULAS ---");
+    
+    // 1. Cargamos lo que ya tenemos
+    const peliculasGuardadas = cargarCatalogoExistente('peliculas.json');
+    // Creamos un "Set" con los IDs existentes para que la búsqueda sea instantánea
+    const idsExistentes = new Set(peliculasGuardadas.map(p => p.id));
+
     const res = await fetch(`${BASE_URL}&action=get_vod_streams`, opcionesFetch);
     const data = JSON.parse(await res.text());
-    const filtradas = [];
+    const nuevasPeliculas = [];
 
-    console.log(`Analizando ${data.length} películas...`);
+    console.log(`Encontradas ${data.length} películas en el proveedor.`);
+    console.log(`Ya tienes ${idsExistentes.size} guardadas. Buscando novedades...`);
 
     for (let i = 0; i < data.length; i++) {
         const p = data[i];
+
+        // 2. FILTRO: Si ya tenemos esta película, saltamos al siguiente ciclo
+        if (idsExistentes.has(p.stream_id)) continue;
+
         try {
             const resLinks = await fetch(`${BASE_URL}&action=get_vod_links&vod_id=${p.stream_id}`, opcionesFetch);
             const links = await resLinks.json();
@@ -52,7 +76,7 @@ async function procesarPeliculas() {
             }
 
             if (servidores.length > 0) {
-                filtradas.push({
+                nuevasPeliculas.push({
                     id: p.stream_id,
                     nombre: p.name,
                     poster: p.stream_icon,
@@ -63,24 +87,38 @@ async function procesarPeliculas() {
                 });
             }
         } catch (e) {}
-        if (i % 500 === 0 && i !== 0) console.log(`Películas: ${i}/${data.length}`);
+        
+        // Mensaje de progreso solo si estamos procesando nuevas
+        if (nuevasPeliculas.length % 50 === 0 && nuevasPeliculas.length !== 0) {
+            console.log(`Procesadas ${nuevasPeliculas.length} nuevas películas...`);
+        }
         await delay(30);
     }
-    return filtradas;
+    
+    return { nuevas: nuevasPeliculas, todas: [...peliculasGuardadas, ...nuevasPeliculas] };
 }
 
 async function procesarSeries() {
     console.log("--- INICIANDO SERIES ---");
+    
+    // 1. Cargamos lo que ya tenemos
+    const seriesGuardadas = cargarCatalogoExistente('series.json');
+    const idsExistentes = new Set(seriesGuardadas.map(s => s.id));
+
     const res = await fetch(`${BASE_URL}&action=get_series`, opcionesFetch);
     const data = JSON.parse(await res.text());
-    const filtradas = [];
+    const nuevasSeries = [];
 
-    console.log(`Analizando ${data.length} series...`);
+    console.log(`Encontradas ${data.length} series en el proveedor.`);
+    console.log(`Ya tienes ${idsExistentes.size} guardadas. Buscando novedades...`);
 
     for (let i = 0; i < data.length; i++) {
         const s = data[i];
+
+        // 2. FILTRO: Si ya tenemos esta serie, la ignoramos
+        if (idsExistentes.has(s.series_id)) continue;
+
         try {
-            // Obtenemos info de la serie (temporadas/episodios)
             const resInfo = await fetch(`${BASE_URL}&action=get_series_info&series_id=${s.series_id}`, opcionesFetch);
             const serieData = await resInfo.json();
             const episodiosData = serieData.episodes; 
@@ -94,7 +132,6 @@ async function procesarSeries() {
                 const capitulosValidos = [];
 
                 for (const cap of capitulosOriginales) {
-                    // Nueva URL sugerida para obtener links de episodios de series
                     const epUrl = `${BASE_URL}&action=get_episode_links&serie=${s.series_id}&season=${numTemporada}&episode=${cap.episode_num}`;
                     const resLinks = await fetch(epUrl, opcionesFetch);
                     const links = await resLinks.json();
@@ -140,7 +177,7 @@ async function procesarSeries() {
                 const info = serieData.info || {};
                 let banner = info.backdrop_path ? info.backdrop_path[0] : (s.backdrop_path ? s.backdrop_path[0] : null);
                 
-                filtradas.push({
+                nuevasSeries.push({
                     id: s.series_id,
                     nombre: s.name,
                     poster: info.cover || s.cover,
@@ -152,25 +189,50 @@ async function procesarSeries() {
             }
         } catch (e) {}
         
-        if (i % 100 === 0 && i !== 0) console.log(`Series: ${i}/${data.length}`);
+        if (nuevasSeries.length % 10 === 0 && nuevasSeries.length !== 0) {
+            console.log(`Procesadas ${nuevasSeries.length} nuevas series...`);
+        }
         await delay(30); 
     }
-    return filtradas;
+    
+    return { nuevas: nuevasSeries, todas: [...seriesGuardadas, ...nuevasSeries] };
 }
 
 async function iniciar() {
     try {
-        const peliculas = await procesarPeliculas();
-        fs.writeFileSync('peliculas.json', JSON.stringify(peliculas, null, 2));
-        console.log(`✅ Películas listas: ${peliculas.length}`);
+        // --- PROCESAR PELÍCULAS ---
+        const { nuevas: nuevasPelis, todas: todasPelis } = await procesarPeliculas();
+        
+        // Actualizamos el maestro con todo (antiguas + nuevas)
+        fs.writeFileSync('peliculas.json', JSON.stringify(todasPelis, null, 2));
+        
+        // Guardamos las nuevas en un archivo separado para tu control
+        if (nuevasPelis.length > 0) {
+            fs.writeFileSync('nuevas_peliculas.json', JSON.stringify(nuevasPelis, null, 2));
+            console.log(`✅ ¡Se agregaron ${nuevasPelis.length} PELÍCULAS NUEVAS! Guardadas en 'nuevas_peliculas.json'`);
+        } else {
+            console.log(`✅ No hay películas nuevas hoy. Total en catálogo: ${todasPelis.length}`);
+        }
 
-        const series = await procesarSeries();
-        fs.writeFileSync('series.json', JSON.stringify(series, null, 2));
-        console.log(`✅ Series listas: ${series.length}`);
+        console.log("\n-----------------------------------\n");
 
-        console.log("🚀 Sincronización completa.");
+        // --- PROCESAR SERIES ---
+        const { nuevas: nuevasSeries, todas: todasSeries } = await procesarSeries();
+        
+        // Actualizamos el maestro con todo
+        fs.writeFileSync('series.json', JSON.stringify(todasSeries, null, 2));
+        
+        // Guardamos las nuevas series
+        if (nuevasSeries.length > 0) {
+            fs.writeFileSync('nuevas_series.json', JSON.stringify(nuevasSeries, null, 2));
+            console.log(`✅ ¡Se agregaron ${nuevasSeries.length} SERIES NUEVAS! Guardadas en 'nuevas_series.json'`);
+        } else {
+            console.log(`✅ No hay series nuevas hoy. Total en catálogo: ${todasSeries.length}`);
+        }
+
+        console.log("\n🚀 Sincronización completa.");
     } catch (error) {
-        console.error("❌ Error:", error.message);
+        console.error("❌ Error general:", error.message);
         process.exit(1); 
     }
 }
