@@ -19,7 +19,19 @@ function formatearTexto(texto) {
     return texto.charAt(0).toUpperCase() + texto.slice(1).toLowerCase();
 }
 
-// NUEVA FUNCIÓN: Lee el archivo JSON si existe, o devuelve un array vacío si es la primera vez
+// NUEVA FUNCIÓN: Extrae un nombre presentable del dominio de la URL
+function obtenerNombreServidor(urlTexto) {
+    try {
+        const urlObj = new URL(urlTexto);
+        const partes = urlObj.hostname.split('.');
+        // Obtiene el dominio principal (ej: player.fembed.com -> fembed)
+        const nombreBase = partes.length >= 2 ? partes[partes.length - 2] : partes[0];
+        return formatearTexto(nombreBase);
+    } catch (e) {
+        return "Servidor Web";
+    }
+}
+
 function cargarCatalogoExistente(rutaArchivo) {
     if (fs.existsSync(rutaArchivo)) {
         try {
@@ -35,9 +47,7 @@ function cargarCatalogoExistente(rutaArchivo) {
 async function procesarPeliculas() {
     console.log("--- INICIANDO PELÍCULAS ---");
     
-    // 1. Cargamos lo que ya tenemos
     const peliculasGuardadas = cargarCatalogoExistente('peliculas.json');
-    // Creamos un "Set" con los IDs existentes para que la búsqueda sea instantánea
     const idsExistentes = new Set(peliculasGuardadas.map(p => p.id));
 
     const res = await fetch(`${BASE_URL}&action=get_vod_streams`, opcionesFetch);
@@ -50,7 +60,6 @@ async function procesarPeliculas() {
     for (let i = 0; i < data.length; i++) {
         const p = data[i];
 
-        // 2. FILTRO: Si ya tenemos esta película, saltamos al siguiente ciclo
         if (idsExistentes.has(p.stream_id)) continue;
 
         try {
@@ -64,14 +73,18 @@ async function procesarPeliculas() {
                 if (!item || typeof item !== 'object') continue;
                 const url = item.url;
                 
-                if (typeof url === 'string' && (url.includes('vidhide') || url.includes('streamwish'))) {
-                    let nombreServidor = url.includes('vidhide') ? "Vidhide" : "Streamwish";
-                    servidores.push({
-                        nombre: nombreServidor,
-                        url: url,
-                        calidad: item.quality || "HD",
-                        idioma: formatearTexto(item.language)
-                    });
+                if (typeof url === 'string') {
+                    const urlMin = url.toLowerCase();
+                    
+                    // FILTRO DE LISTA NEGRA: Ignorar estos servidores
+                    if (!urlMin.includes('do7go') && !urlMin.includes('josephseveralconcern')) {
+                        servidores.push({
+                            nombre: obtenerNombreServidor(url),
+                            url: url,
+                            calidad: item.quality || "HD",
+                            idioma: formatearTexto(item.language)
+                        });
+                    }
                 }
             }
 
@@ -88,7 +101,6 @@ async function procesarPeliculas() {
             }
         } catch (e) {}
         
-        // Mensaje de progreso solo si estamos procesando nuevas
         if (nuevasPeliculas.length % 50 === 0 && nuevasPeliculas.length !== 0) {
             console.log(`Procesadas ${nuevasPeliculas.length} nuevas películas...`);
         }
@@ -101,7 +113,6 @@ async function procesarPeliculas() {
 async function procesarSeries() {
     console.log("--- INICIANDO SERIES ---");
     
-    // 1. Cargamos lo que ya tenemos
     const seriesGuardadas = cargarCatalogoExistente('series.json');
     const idsExistentes = new Set(seriesGuardadas.map(s => s.id));
 
@@ -115,7 +126,6 @@ async function procesarSeries() {
     for (let i = 0; i < data.length; i++) {
         const s = data[i];
 
-        // 2. FILTRO: Si ya tenemos esta serie, la ignoramos
         if (idsExistentes.has(s.series_id)) continue;
 
         try {
@@ -143,14 +153,18 @@ async function procesarSeries() {
                         if (!item || typeof item !== 'object') continue;
                         const url = item.url;
                         
-                        if (typeof url === 'string' && (url.includes('vidhide') || url.includes('streamwish'))) {
-                            let nombreServidor = url.includes('vidhide') ? "Vidhide" : "Streamwish";
-                            servidores.push({
-                                nombre: nombreServidor,
-                                url: url,
-                                calidad: item.quality || "HD",
-                                idioma: formatearTexto(item.language)
-                            });
+                        if (typeof url === 'string') {
+                            const urlMin = url.toLowerCase();
+                            
+                            // FILTRO DE LISTA NEGRA PARA SERIES
+                            if (!urlMin.includes('do7go') && !urlMin.includes('josephseveralconcern')) {
+                                servidores.push({
+                                    nombre: obtenerNombreServidor(url),
+                                    url: url,
+                                    calidad: item.quality || "HD",
+                                    idioma: formatearTexto(item.language)
+                                });
+                            }
                         }
                     }
 
@@ -200,34 +214,28 @@ async function procesarSeries() {
 
 async function iniciar() {
     try {
-        // --- PROCESAR PELÍCULAS ---
         const { nuevas: nuevasPelis, todas: todasPelis } = await procesarPeliculas();
         
-        // Actualizamos el maestro con todo (antiguas + nuevas)
         fs.writeFileSync('peliculas.json', JSON.stringify(todasPelis, null, 2));
         
-        // Guardamos las nuevas en un archivo separado para tu control
         if (nuevasPelis.length > 0) {
             fs.writeFileSync('nuevas_peliculas.json', JSON.stringify(nuevasPelis, null, 2));
-            console.log(`✅ ¡Se agregaron ${nuevasPelis.length} PELÍCULAS NUEVAS! Guardadas en 'nuevas_peliculas.json'`);
+            console.log(`✅ ¡Se agregaron ${nuevasPelis.length} PELÍCULAS NUEVAS!`);
         } else {
-            console.log(`✅ No hay películas nuevas hoy. Total en catálogo: ${todasPelis.length}`);
+            console.log(`✅ No hay películas nuevas. Total en catálogo: ${todasPelis.length}`);
         }
 
         console.log("\n-----------------------------------\n");
 
-        // --- PROCESAR SERIES ---
         const { nuevas: nuevasSeries, todas: todasSeries } = await procesarSeries();
         
-        // Actualizamos el maestro con todo
         fs.writeFileSync('series.json', JSON.stringify(todasSeries, null, 2));
         
-        // Guardamos las nuevas series
         if (nuevasSeries.length > 0) {
             fs.writeFileSync('nuevas_series.json', JSON.stringify(nuevasSeries, null, 2));
-            console.log(`✅ ¡Se agregaron ${nuevasSeries.length} SERIES NUEVAS! Guardadas en 'nuevas_series.json'`);
+            console.log(`✅ ¡Se agregaron ${nuevasSeries.length} SERIES NUEVAS!`);
         } else {
-            console.log(`✅ No hay series nuevas hoy. Total en catálogo: ${todasSeries.length}`);
+            console.log(`✅ No hay series nuevas. Total en catálogo: ${todasSeries.length}`);
         }
 
         console.log("\n🚀 Sincronización completa.");
