@@ -30,46 +30,197 @@ function obtenerNombreServidor(urlTexto) {
     }
 }
 
-function cargarCatalogoExistente(rutaArchivo) {
-    if (fs.existsSync(rutaArchivo)) {
-        try {
-            return JSON.parse(fs.readFileSync(rutaArchivo, 'utf8'));
-        } catch (error) {
-            console.error(`⚠️ Error leyendo ${rutaArchivo}. Se asumirá que está vacío.`);
-            return [];
-        }
-    }
-    return [];
-}
-
 async function procesarPeliculas() {
-    console.log("--- INICIANDO PELÍCULAS ---");
+    console.log("--- INICIANDO EXTRACCIÓN TOTAL DE PELÍCULAS ---");
     
-    const peliculasGuardadas = cargarCatalogoExistente('peliculas.json');
-    const idsExistentes = new Set(peliculasGuardadas.map(p => p.id));
-
     const res = await fetch(`${BASE_URL}&action=get_vod_streams`, opcionesFetch);
     const data = JSON.parse(await res.text());
-    const nuevasPeliculas = [];
+    const catalogoCompleto = [];
 
-    console.log(`Encontradas ${data.length} películas en el proveedor.`);
-    console.log(`Ya tienes ${idsExistentes.size} guardadas. Buscando novedades...`);
+    console.log(`Encontradas ${data.length} películas en el proveedor. Procesando todas...`);
 
     for (let i = 0; i < data.length; i++) {
         const p = data[i];
-
-        if (idsExistentes.has(p.stream_id)) continue;
 
         try {
             const urlPelicula = `${BASE_URL}&action=get_vod_links&vod_id=${p.stream_id}`;
             const resLinks = await fetch(urlPelicula, opcionesFetch);
             
-            if (!resLinks.ok) {
-                console.log(`⚠️ Error HTTP ${resLinks.status} al consultar links del ID: ${p.stream_id}`);
-                continue;
-            }
+            if (!resLinks.ok) continue;
 
             const textoRespuesta = await resLinks.text();
             let links;
             try {
                 links = JSON.parse(textoRespuesta);
+            } catch (errParse) {
+                continue;
+            }
+            
+            const servidores = [];
+            const listaLinks = Array.isArray(links) ? links : Object.values(links || {});
+
+            for (const item of listaLinks) {
+                if (!item || typeof item !== 'object') continue;
+                const url = item.url;
+                
+                if (typeof url === 'string') {
+                    const urlMin = url.toLowerCase();
+                    // FILTRO DE LISTA NEGRA
+                    if (!urlMin.includes('do7go') && !urlMin.includes('josephseveralconcern')) {
+                        servidores.push({
+                            nombre: obtenerNombreServidor(url),
+                            url: url,
+                            calidad: item.quality || "HD",
+                            idioma: formatearTexto(item.language)
+                        });
+                    }
+                }
+            }
+
+            if (servidores.length > 0) {
+                catalogoCompleto.push({
+                    id: p.stream_id,
+                    nombre: p.name,
+                    poster: p.stream_icon,
+                    banner: p.backdrop_path ? p.backdrop_path[0] : p.stream_icon,
+                    rating: p.rating,
+                    año: p.year,
+                    servidores: servidores
+                });
+            }
+        } catch (e) {
+             // Silenciar errores para no saturar consola en procesamiento masivo
+        }
+        
+        if (catalogoCompleto.length % 500 === 0 && catalogoCompleto.length !== 0) {
+            console.log(`Procesadas ${catalogoCompleto.length} películas con links válidos...`);
+        }
+        await delay(50); // Reducido ligeramente porque procesar todo tomará tiempo
+    }
+    
+    return catalogoCompleto;
+}
+
+async function procesarSeries() {
+    console.log("\n--- INICIANDO EXTRACCIÓN TOTAL DE SERIES ---");
+    
+    const res = await fetch(`${BASE_URL}&action=get_series`, opcionesFetch);
+    const data = JSON.parse(await res.text());
+    const catalogoCompleto = [];
+
+    console.log(`Encontradas ${data.length} series en el proveedor. Procesando todas...`);
+
+    for (let i = 0; i < data.length; i++) {
+        const s = data[i];
+
+        try {
+            const resInfo = await fetch(`${BASE_URL}&action=get_series_info&series_id=${s.series_id}`, opcionesFetch);
+            if (!resInfo.ok) continue;
+
+            const serieData = await resInfo.json();
+            const episodiosData = serieData.episodes; 
+
+            if (!episodiosData || typeof episodiosData !== 'object') continue;
+
+            const temporadasValidas = [];
+
+            for (const numTemporada in episodiosData) {
+                const capitulosOriginales = episodiosData[numTemporada];
+                const capitulosValidos = [];
+
+                for (const cap of capitulosOriginales) {
+                    try {
+                        const epUrl = `${BASE_URL}&action=get_episode_links&serie=${s.series_id}&season=${numTemporada}&episode=${cap.episode_num}`;
+                        const resLinks = await fetch(epUrl, opcionesFetch);
+                        if (!resLinks.ok) continue;
+
+                        const textoRespuesta = await resLinks.text();
+                        let links;
+                        try {
+                            links = JSON.parse(textoRespuesta);
+                        } catch (errParse) { continue; }
+
+                        const servidores = [];
+                        const listaLinks = Array.isArray(links) ? links : Object.values(links || {});
+
+                        for (const item of listaLinks) {
+                            if (!item || typeof item !== 'object') continue;
+                            const url = item.url;
+                            if (typeof url === 'string') {
+                                const urlMin = url.toLowerCase();
+                                if (!urlMin.includes('do7go') && !urlMin.includes('josephseveralconcern')) {
+                                    servidores.push({
+                                        nombre: obtenerNombreServidor(url),
+                                        url: url,
+                                        calidad: item.quality || "HD",
+                                        idioma: formatearTexto(item.language)
+                                    });
+                                }
+                            }
+                        }
+
+                        if (servidores.length > 0) {
+                            capitulosValidos.push({
+                                id: cap.id,
+                                numero: cap.episode_num,
+                                titulo: cap.title || `Capítulo ${cap.episode_num}`,
+                                servidores: servidores
+                            });
+                        }
+                    } catch (e) {}
+                    await delay(50); 
+                }
+
+                if (capitulosValidos.length > 0) {
+                    temporadasValidas.push({
+                        numero: numTemporada,
+                        capitulos: capitulosValidos
+                    });
+                }
+            }
+
+            if (temporadasValidas.length > 0) {
+                const info = serieData.info || {};
+                let banner = info.backdrop_path ? info.backdrop_path[0] : (s.backdrop_path ? s.backdrop_path[0] : null);
+                
+                catalogoCompleto.push({
+                    id: s.series_id,
+                    nombre: s.name,
+                    poster: info.cover || s.cover,
+                    banner: banner || info.cover || s.cover,
+                    rating: info.rating || s.rating,
+                    año: info.releaseDate || s.releaseDate,
+                    temporadas: temporadasValidas
+                });
+            }
+        } catch (e) {}
+        
+        if (catalogoCompleto.length % 100 === 0 && catalogoCompleto.length !== 0) {
+            console.log(`Procesadas ${catalogoCompleto.length} series con links válidos...`);
+        }
+        await delay(50); 
+    }
+    
+    return catalogoCompleto;
+}
+
+async function iniciar() {
+    try {
+        const todasPelis = await procesarPeliculas();
+        fs.writeFileSync('peliculas.json', JSON.stringify(todasPelis, null, 2));
+        console.log(`✅ ¡Proceso de películas terminado! Total guardado: ${todasPelis.length}`);
+
+        console.log("\n-----------------------------------\n");
+
+        const todasSeries = await procesarSeries();
+        fs.writeFileSync('series.json', JSON.stringify(todasSeries, null, 2));
+        console.log(`✅ ¡Proceso de series terminado! Total guardado: ${todasSeries.length}`);
+
+        console.log("\n🚀 Sincronización completa.");
+    } catch (error) {
+        console.error("❌ Error general:", error.message);
+        process.exit(1); 
+    }
+}
+
+iniciar();
