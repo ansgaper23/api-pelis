@@ -14,8 +14,6 @@ jobs:
     steps:
       - name: Descargar el repositorio
         uses: actions/checkout@v3
-        with:
-          fetch-depth: 0 # 🔑 Descarga el historial completo para evitar errores de sincronización
 
       - name: Instalar Node.js
         uses: actions/setup-node@v3
@@ -33,22 +31,17 @@ jobs:
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
           
-          # Agregamos solo los archivos JSON
-          git add *.json
+          # Restaurar package-lock.json a su estado original para que no estorbe
+          git checkout -- package-lock.json || true
           
-          # 🔑 Validamos si hay cambios reales en los JSON antes de intentar subir algo
-          if git diff --staged --quiet; then
-            echo "✅ No hay películas ni series nuevas. Se omite la subida."
-          else
-            echo "🚀 Cambios detectados. Preparando subida..."
-            git commit -m "Actualización automática de JSON"
-            
-            # Restauramos package-lock.json para evitar conflictos en el pull
-            git checkout -- package-lock.json
-            
-            # Sincronizamos con el repositorio remoto de forma segura
-            git pull --rebase origin main
-            
-            # Subimos los archivos
-            git push
-          fi
+          # Agregar SOLO los dos archivos JSON que nos importan
+          git add peliculas.json series.json
+          
+          # Hacer commit. Si no hay cambios, no fallará gracias al '|| true'
+          git commit -m "Actualización masiva de catálogo" || true
+          
+          # Bajar la última versión del repo forzando la integración
+          git pull --rebase origin main || true
+          
+          # Subir los archivos forzando si es necesario
+          git push origin main
