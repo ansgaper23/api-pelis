@@ -1,16 +1,44 @@
-- name: Guardar los JSON generados en el repositorio
-      run: |
-        git config --global user.name "GitHub Action Bot"
-        git config --global user.email "action@github.com"
-        
-        # Añade solo los archivos JSON que te interesan
-        git add *.json
-        
-        # Hace el commit solo si detecta que hubo modificaciones
-        git commit -m "Actualizar catálogo" || echo "No hay cambios para hacer commit"
-        
-        # 🔑 LA SOLUCIÓN: Descargar los cambios remotos antes de subir
-        git pull --rebase origin main
-        
-        # Subir los cambios finales
-        git push
+name: Actualizar Cartelera Perucho TV
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  actualizar-datos:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v3
+
+      - name: Instalar Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Instalar dependencias
+        run: npm install
+
+      - name: Ejecutar el Scraper
+        run: node scraper.js
+
+      - name: Guardar los JSON generados en el repositorio
+        run: |
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+          
+          # Agregamos todos los archivos JSON generados o actualizados
+          git add *.json
+          
+          # Intentamos hacer el commit
+          git commit -m "Actualización automática de JSON" || echo "No hay cambios para subir"
+          
+          # 🔑 Descargamos e integramos cualquier cambio remoto (Soluciona el error rejected)
+          git pull --rebase origin main
+          
+          # Subimos los cambios finales
+          git push
