@@ -30,6 +30,15 @@ jobs:
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
-          git add peliculas.json series.json
+          
+          # Agregamos todos los archivos JSON generados o actualizados
+          git add *.json
+          
+          # Intentamos hacer el commit
           git commit -m "Actualización automática de JSON" || echo "No hay cambios para subir"
+          
+          # 🔑 Descargamos e integramos cualquier cambio remoto (Soluciona el error rejected)
+          git pull --rebase origin main
+          
+          # Subimos los cambios finales
           git push
